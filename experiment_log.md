@@ -160,5 +160,15 @@
 - train.py：训练每 vis_every iter 改为对**固定全图预览样本**做分块推理，出**整图**三联图(中心输入|去噪|N2N标签)，不再是 patch。`build_preview` 取第一条序列中点的全分辨率窗+邻帧标签。
 - 验证：全图预览 (1208×1352) 正常，无接缝；单次预览开销约 3~5s(3060)，相对 200iter 训练间隔可忽略。
 
+### 2026-06-11 — 首次服务器训练：方法有效但 I/O 瓶颈严重
+- 现象：服务器跑 ~3h 仅到 iter 2800（**~3.9s/iter**，比本地 3060 的 0.25s/iter 慢 15×）。用户"看不出改善"实为迭代太少(<0.2 epoch)。
+- 看图结论：**模型在学**——it0 去噪全黑(未训)，it2800 已是真实去噪结果(背景压制+大血管清晰)。方法方向无误。
+- 根因：**数据 I/O 瓶颈**。dataset 每样本读整张 1208×1352 npy(6.5MB/帧)再裁 256；每 iter 8样本×6帧≈312MB，从 /mnt2 网络存储拉，带宽~80MB/s → GPU 空转等数据。
+- 修复：
+  - dataset 用 **np.load(mmap_mode='r') 只读裁剪行带**（_load_2d_region/_load_2d_shape）：整张 6.5MB→约1.4MB/帧，I/O 降~4.7×。验证 mmap 区域读与全读再裁逐元素一致。
+  - DataLoader 加 persistent_workers + prefetch_factor=4 保持 worker 预取。
+- 预期：iter 速度数倍提升；若仍 I/O 受限，考虑把数据拷到服务器本地 SSD，或先用子集(几十条序列)跑 baseline。
+- checkpoint：sinf_last.pth 当时在 epoch0/iter2000。
+
 ## 6. 里程碑
 - **2026-06-11**：SINF(BSN→N2N) 全部模块 + train/eval 建成，真实数据端到端跑通；本地 1000iter 理智测试确认 loss 收敛 + 去噪雏形（大血管清晰、背景去噪），方向正确。下一步＝服务器 2×A5000 正式训练出 baseline + 修 eval 分块接缝。

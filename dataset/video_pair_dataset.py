@@ -79,6 +79,41 @@ def _load_2d(path: str) -> np.ndarray:
     return arr.astype(np.float32, copy=False)
 
 
+def _load_2d_shape(path: str) -> tuple[int, int]:
+    """只读形状，不读数据（npy 用 mmap 读 header）。"""
+    ext = os.path.splitext(path)[1].lower()
+    if ext == ".npy":
+        arr = np.load(path, mmap_mode="r", allow_pickle=False)
+        sh = arr.shape
+        if len(sh) == 3:
+            sh = sh[1:] if sh[0] == 1 else sh[:2]
+        return int(sh[0]), int(sh[1])
+    return _load_2d(path).shape  # lbf 只能全读
+
+
+def _load_2d_region(path: str, crop) -> np.ndarray:
+    """读 2D float32；crop=(top,left,c) 时 **npy 用 mmap 只读裁剪区域**（省 I/O）。
+
+    npy 是行优先存储，mmap 切 [top:top+c] 只会 fault 进那几行的页，
+    相比把整张 1208×1352 读进来再裁，I/O 降约 H/c 倍。lbf 仍全读后裁。
+    """
+    ext = os.path.splitext(path)[1].lower()
+    if ext == ".npy":
+        arr = np.load(path, mmap_mode="r", allow_pickle=False)
+        if arr.ndim == 3:
+            arr = arr[0] if arr.shape[0] == 1 else arr[..., 0]
+        if crop is not None:
+            top, left, c = crop
+            arr = arr[top:top + c, left:left + c]
+        return np.ascontiguousarray(arr, dtype=np.float32)
+
+    img = _load_2d(path)  # lbf 全读
+    if crop is not None:
+        top, left, c = crop
+        img = img[top:top + c, left:left + c]
+    return np.ascontiguousarray(img, dtype=np.float32)
+
+
 def _find_sequence_dirs(
     root: str,
     npy_subdir: str = "npy",
@@ -223,11 +258,8 @@ class VideoN2NDataset(Dataset):
         return top, left, c
 
     def _load_cropped(self, seq_dir: str, fname: str, crop) -> np.ndarray:
-        img = _load_2d(os.path.join(seq_dir, fname))
-        if crop is not None:
-            top, left, c = crop
-            img = img[top:top + c, left:left + c]
-        return np.ascontiguousarray(img)
+        # npy 走 mmap 只读裁剪区域，大幅省 I/O（见 _load_2d_region）
+        return _load_2d_region(os.path.join(seq_dir, fname), crop)
 
     def _to_tensor(self, img: np.ndarray) -> torch.Tensor:
         t = torch.from_numpy(img).float().unsqueeze(0)  # (1, H, W)
@@ -243,9 +275,9 @@ class VideoN2NDataset(Dataset):
         # 随机挑一个合法标签帧（已保证在窗外 + 去相关）
         target_idx = random.choice(self._valid_targets(n, t))
 
-        # 先按中心帧确定共享裁剪位置（同序列各帧同形状）
-        center_img = _load_2d(os.path.join(seq_dir, files[t]))
-        crop = self._make_crop(center_img.shape[0], center_img.shape[1])
+        # 先按中心帧确定共享裁剪位置（只读形状，不读数据）
+        H, W = _load_2d_shape(os.path.join(seq_dir, files[t]))
+        crop = self._make_crop(H, W)
 
         # 输入窗 {t-K..t+K}
         window_indices = range(t - self.K, t + self.K + 1)

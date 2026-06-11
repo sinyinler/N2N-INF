@@ -123,8 +123,10 @@ def main():
         npy_subdir=dcfg.get("npy_subdir", "npy"),
         exclude_dirs=tuple(dcfg.get("exclude_dirs", ["bfi_nonoverlap"])),
     )
-    dl = DataLoader(ds, batch_size=bs, shuffle=True,
-                    num_workers=tcfg.get("num_workers", 4), drop_last=True, pin_memory=(device == "cuda"))
+    nw = tcfg.get("num_workers", 4)
+    dl = DataLoader(ds, batch_size=bs, shuffle=True, num_workers=nw,
+                    drop_last=True, pin_memory=(device == "cuda"),
+                    persistent_workers=(nw > 0), prefetch_factor=(4 if nw > 0 else None))
     print(f"[data] root={root} 序列={len(ds.sequences)} 样本={len(ds)} crop={crop} bs={bs}")
 
     # 模型 / 损失 / 优化器
