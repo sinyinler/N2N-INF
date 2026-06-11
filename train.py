@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 
 import numpy as np
 import torch
@@ -78,6 +79,13 @@ def save_fullframe_vis(center_in, denoised, target, save_path):
 
 
 def main():
+    # 行缓冲：nohup 重定向到文件时 stdout 默认块缓冲，loss 不会实时刷进日志；
+    # 这里强制逐行刷新，tail -f 就能实时看到（不必再加 python -u）。
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except Exception:
+        pass
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default="configs/default.yaml")
     ap.add_argument("--root", default=None, help="数据根目录（覆盖 config.data.root_dir）")
