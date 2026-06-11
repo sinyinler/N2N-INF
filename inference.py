@@ -44,11 +44,16 @@ def tiled_denoise(model, window_full: torch.Tensor, t_coords: torch.Tensor,
     acc = torch.zeros(H, W)
     blend = _hann2d(tile, tile)
 
+    dh, dw = max(H - 1, 1), max(W - 1, 1)
     for y in _starts(H, tile, stride):
         for x in _starts(W, tile, stride):
             patch = window_full[:, :, y:y + tile, x:x + tile].unsqueeze(0).to(device)  # (1,T,1,tile,tile)
             tc = t_coords.unsqueeze(0).to(device)                                       # (1,T)
-            pred = model(patch, tc)[0, 0].float().cpu()                                 # (tile,tile)
+            # 该 tile 在整图里的绝对归一化坐标（与训练口径一致）
+            box = torch.tensor([[2 * y / dh - 1, 2 * (y + tile - 1) / dh - 1,
+                                 2 * x / dw - 1, 2 * (x + tile - 1) / dw - 1]],
+                               dtype=torch.float32, device=device)
+            pred = model(patch, tc, box)[0, 0].float().cpu()                            # (tile,tile)
             out[y:y + tile, x:x + tile] += pred * blend
             acc[y:y + tile, x:x + tile] += blend
 

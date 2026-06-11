@@ -33,16 +33,20 @@ class FourierPositionEncoding(nn.Module):
         self.register_buffer("freqs", freqs)
         self.out_dim = 2 * num_bands * 3  # sin/cos × bands × (x,y,t)
 
-    def forward(self, t_norm: torch.Tensor, H: int, W: int) -> torch.Tensor:
-        # t_norm: (N,) 取值 [0,1]（来自 dataset 的全局归一化时间戳）
+    def forward(self, t_norm: torch.Tensor, H: int, W: int, box: torch.Tensor) -> torch.Tensor:
+        # t_norm: (N,) 取值 [0,1]；box: (N,4)=(y0,y1,x0,x1) 裁剪块在整图里的**绝对**归一化坐标范围。
+        # 用绝对坐标，使同一序列里不同裁剪块的坐标对应真实位置（单序列过拟合时坐标 INF 才有意义）。
         N = t_norm.shape[0]
         device, dtype = t_norm.device, t_norm.dtype
 
-        ys = torch.linspace(-1.0, 1.0, H, device=device, dtype=dtype)
-        xs = torch.linspace(-1.0, 1.0, W, device=device, dtype=dtype)
-        gy, gx = torch.meshgrid(ys, xs, indexing="ij")          # (H,W)
-        gx = gx.expand(N, H, W)
-        gy = gy.expand(N, H, W)
+        lin_h = torch.linspace(0.0, 1.0, H, device=device, dtype=dtype)  # (H,)
+        lin_w = torch.linspace(0.0, 1.0, W, device=device, dtype=dtype)  # (W,)
+        y0, y1, x0, x1 = box[:, 0:1], box[:, 1:2], box[:, 2:3], box[:, 3:4]  # (N,1)
+        ys = y0 + (y1 - y0) * lin_h.unsqueeze(0)   # (N,H) 块的绝对 y 坐标
+        xs = x0 + (x1 - x0) * lin_w.unsqueeze(0)   # (N,W) 块的绝对 x 坐标
+
+        gy = ys.view(N, H, 1).expand(N, H, W)
+        gx = xs.view(N, 1, W).expand(N, H, W)
         gt = (t_norm.view(N, 1, 1) * 2.0 - 1.0).expand(N, H, W)  # [0,1]->[-1,1]
 
         coords = torch.stack([gx, gy, gt], dim=1)               # (N,3,H,W)
@@ -83,10 +87,10 @@ class INFHead(nn.Module):
             nn.Conv2d(64, out_channels, 1),
         )
 
-    def forward(self, feat: torch.Tensor, t_norm: torch.Tensor) -> torch.Tensor:
+    def forward(self, feat: torch.Tensor, t_norm: torch.Tensor, box: torch.Tensor) -> torch.Tensor:
         N, _C, H, W = feat.shape
         U = self.local(feat)                                  # (N,32,H,W)
-        gamma = self.fourier(t_norm, H, W)                    # (N,Fdim,H,W)
+        gamma = self.fourier(t_norm, H, W, box)               # (N,Fdim,H,W)
         v = self.coord_mlp(torch.cat([gamma, feat], dim=1))   # (N,32,H,W)
         z = self.fuse(torch.cat([U, v], dim=1))               # (N,out,H,W)
         return z
@@ -96,7 +100,8 @@ if __name__ == "__main__":
     head = INFHead(in_channels=16, fourier_bands=10, out_channels=16)
     feat = torch.randn(10, 16, 128, 128)          # N=B*T=10
     t_norm = torch.rand(10)                        # [0,1]
-    z = head(feat, t_norm)
+    box = torch.tensor([[-1.0, 1.0, -1.0, 1.0]]).expand(10, 4)  # 全图坐标范围
+    z = head(feat, t_norm, box)
     print("feat in :", tuple(feat.shape))
     print("z out   :", tuple(z.shape), " Fourier dim =", head.fourier.out_dim)
     assert z.shape == (10, 16, 128, 128)

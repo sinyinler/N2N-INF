@@ -293,7 +293,21 @@ class VideoN2NDataset(Dataset):
         denom = max(n - 1, 1)
         t_coords = torch.tensor([i / denom for i in window_indices], dtype=torch.float32)  # (T,)
 
-        return window, t_coords, target
+        # box：裁剪块在整图里的**绝对**归一化坐标 (y0,y1,x0,x1)∈[-1,1]
+        if crop is not None:
+            top, left, c = crop
+            ch = cw = c
+        else:
+            top = left = 0
+            ch, cw = H, W
+        dh, dw = max(H - 1, 1), max(W - 1, 1)
+        box = torch.tensor(
+            [2 * top / dh - 1, 2 * (top + ch - 1) / dh - 1,
+             2 * left / dw - 1, 2 * (left + cw - 1) / dw - 1],
+            dtype=torch.float32,
+        )
+
+        return window, t_coords, target, box
 
 
 # ------------------------------------------------------------------
@@ -340,8 +354,8 @@ if __name__ == "__main__":
         )
 
     # 真正取一个样本，确认张量形状
-    window, t_coords, target = ds[0]
+    window, t_coords, target, box = ds[0]
     print(f"window={tuple(window.shape)} (T,1,H,W)  "
           f"t_coords={tuple(t_coords.shape)} {t_coords.tolist()}  "
-          f"target={tuple(target.shape)}")
+          f"target={tuple(target.shape)}  box={[round(v,3) for v in box.tolist()]}")
     print("✅ 方案①约束校验通过，数据管线可用。")

@@ -163,9 +163,10 @@ def main():
     it = 0
     for epoch in range(start_epoch, epochs):
         model.train()
-        for window, t_coords, target in dl:
-            window, t_coords, target = window.to(device), t_coords.to(device), target.to(device)
-            out = model(window, t_coords)
+        for window, t_coords, target, box in dl:
+            window, t_coords, target, box = (window.to(device), t_coords.to(device),
+                                             target.to(device), box.to(device))
+            out = model(window, t_coords, box)
             loss = loss_fn(out, target)
 
             opt.zero_grad(set_to_none=True)

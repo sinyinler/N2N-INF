@@ -44,9 +44,9 @@ class FinalINFHead(nn.Module):
         net += [nn.Conv2d(hidden, out_channels, 1)]
         self.net = nn.Sequential(*net)
 
-    def forward(self, z_star: torch.Tensor, t_center: torch.Tensor) -> torch.Tensor:
+    def forward(self, z_star: torch.Tensor, t_center: torch.Tensor, box: torch.Tensor) -> torch.Tensor:
         _B, _C, H, W = z_star.shape
-        gamma = self.fourier(t_center, H, W)            # (B, Fdim, H, W)
+        gamma = self.fourier(t_center, H, W, box)       # (B, Fdim, H, W)
         return self.net(torch.cat([gamma, z_star], dim=1))
 
 
@@ -101,22 +101,23 @@ class SINF(nn.Module):
             final_layers=m.get("inf_head", {}).get("layers", 4),
         )
 
-    def forward(self, window: torch.Tensor, t_coords: torch.Tensor) -> torch.Tensor:
-        """window: (B,T,1,H,W)，t_coords: (B,T) -> 中心帧 Ĉ_t: (B,out,H,W)。"""
+    def forward(self, window: torch.Tensor, t_coords: torch.Tensor, box: torch.Tensor) -> torch.Tensor:
+        """window: (B,T,1,H,W)，t_coords: (B,T)，box: (B,4) 裁剪块绝对坐标 -> 中心帧 Ĉ_t: (B,out,H,W)。"""
         B, T, _C, H, W = window.shape
 
         feats = self.backbone.forward_window(window)             # (B,T,16,H,W)
         feats_flat = feats.reshape(B * T, -1, H, W)
         t_flat = t_coords.reshape(B * T)
+        box_bt = box.view(B, 1, 4).expand(B, T, 4).reshape(B * T, 4)  # 每帧共用该样本的块坐标
 
-        z = self.inf_head(feats_flat, t_flat)                    # (B*T,16,H,W)
+        z = self.inf_head(feats_flat, t_flat, box_bt)            # (B*T,16,H,W)
         e_t = self.ite(t_flat)                                   # (B*T, ite_out)
         h = ImplicitTemporalEmbedding.broadcast_concat(z, e_t)   # (B*T,32,H,W)
         h = h.reshape(B, T, -1, H, W)
 
         z_star = self.tsgm(h)                                    # (B,32,H,W)
         t_center = t_coords[:, T // 2]                           # (B,)
-        out = self.final(z_star, t_center)                       # (B,out,H,W)
+        out = self.final(z_star, t_center, box)                  # (B,out,H,W)
         return out
 
 
@@ -124,7 +125,8 @@ if __name__ == "__main__":
     net = SINF()
     window = torch.randn(2, 5, 1, 64, 64)
     t_coords = torch.rand(2, 5)
-    out = net(window, t_coords)
+    box = torch.tensor([[-1.0, 1.0, -1.0, 1.0]]).expand(2, 4)
+    out = net(window, t_coords, box)
     print("window  :", tuple(window.shape))
     print("output  :", tuple(out.shape), "(应为 (2,1,64,64))")
     assert out.shape == (2, 1, 64, 64)
