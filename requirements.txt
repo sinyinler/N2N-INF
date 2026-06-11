@@ -1,0 +1,10 @@
+# 训练/评估依赖。torch 请按你的 CUDA 版本单独装（此处不固定版本）。
+# 训练最少需要：torch numpy pyyaml matplotlib
+torch
+numpy
+pyyaml
+matplotlib
+# 仅 eval 出指标(SSIM)时需要：
+scikit-image
+# lbf 预览图(可选)：
+Pillow
