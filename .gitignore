@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+.venv/
+venv/
+
+# 数据 / 大文件 / 产物
+*.lbf
+*.npy
+*.npz
+*.pth
+*.ckpt
+*.mat
+results/*
+!results/.gitkeep
+
+# 论文 PDF（IEEE 版权 + 体积大，不入库）
+*.pdf
+
+# OS
+.DS_Store
+Thumbs.db

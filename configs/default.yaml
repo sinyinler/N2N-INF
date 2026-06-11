@@ -1,0 +1,55 @@
+# ============================================================
+# SINF (BSN→N2N) 复现 — 默认配置
+# 论文: Hu et al. 2026, TPAMI,
+#       "Learning Continuous Spatiotemporal Implicit Neural Fields
+#        for Unsupervised Video Denoising"
+# 本文件集中管理所有超参；锁定依据见 experiment_log.md §1。
+# ============================================================
+
+data:
+  root_dir: ""                # LSCI 序列根目录 (.lbf / .npy)
+  intensity_transform: log1p  # 已定：先 log1p；learned_vst 留作对比实验 E3
+  temporal_length: 5          # T=5，输入窗 = {t-2,...,t+2}
+  window_radius: 2            # 输入窗半径 K=2
+  pair_intervals: [7, 9]      # N2N 标签间隔；已弃用 5（窗半径2 下无法满足去相关≥5）
+  exclude_target_from_window: true  # ⚠️ N2N 正确性：标签帧绝不能在输入窗里
+  crop_size: 512              # 沿用旧配置；多帧+TSGM 可能 OOM，实测按需下调（256/128）
+  normalize_to_01: false      # 论文归一化[0,1]；我们走 log1p，暂不强制
+
+model:
+  in_channels: 1              # LSCI 单通道
+  out_channels: 1
+  backbone: lightweight       # 已定：先用现有 16-32-64-80；论文 32-64-128-128-128 为对比实验 E4
+  fourier_bands: 10           # 坐标 Fourier 编码倍频带数（论文未写死）
+  bidirectional: true         # 双向编码 Ff / Fb
+  ite:                        # 隐式时间嵌入（照搬论文）
+    layers: 3
+    hidden: 64
+  tsgm:                       # 时间感知空间图对齐
+    window: 7                 # 7x7 空间窗
+    temporal_radius: 2        # 对齐输入窗半径（论文写3，为自洽改2）
+    heads: 4
+  inf_head:                   # 最终 INF 解码头（照搬论文）
+    layers: 4
+    hidden: 128
+    activation: relu
+
+loss:
+  type: charbonnier           # 已定默认；l2 为对比实验 E1
+  charbonnier_eps: 1.0e-3
+  use_rtv: false              # 已定：先不挂；细血管被磨平时作对比实验 E2
+  # 不使用蒸馏项（论文真实噪声分支的 distillation，我们无 teacher）
+
+train:
+  optimizer: adam
+  lr: 1.0e-4
+  betas: [0.9, 0.999]
+  weight_decay: 1.0e-6
+  grad_clip_norm: 5
+  batch_size: 48              # 沿用旧配置；多帧模型极可能 OOM，实测下调（见 log §4）
+  device: cuda                # 2x A500 工作站
+
+eval:
+  metrics: [psnr, ssim, pearson_r]
+  full_frame_sliding: true    # 评估用全图滑窗推理
+  roi_zoom: true              # 细小血管 ROI 局部放大（规范第4条）
