@@ -116,3 +116,10 @@
 - 实现约定（论文未写死）：非重叠窗代替逐像素 N(x,y) 邻域（更轻）；H/W 自动 pad 到 ws 整数倍再裁回。
 - 验证：(2,5,32,50,60)→(2,32,50,60)（含非7倍数 padding），参数 0.0092M。
 - 待定：dim（TSGM 工作通道）在 sinf 组装时定；overlapping 窗 / 逐像素邻域可作精度对比实验。
+
+### 2026-06-11 — 组装 model/sinf.py（完整 SINF）+ 真实数据贯通
+- 改了什么：顶层把 backbone→INFHead(式21)→ITE(式35)→TSGM(式22)→FinalINFHead F_Θ(式23) 串起来；新增最终重建头 F_Θ（4层 MLP hidden128，1×1conv 逐像素）。提供 `from_config`。
+- 通道流：feats16 → z_τ16 → +ITE(out16) → 32 → TSGM → 32 → F_Θ → 1。tsgm_dim=32 可被 4 头整除。
+- 验证(dummy)：(2,5,1,64,64)→(2,1,64,64)，**总参数 0.1532M**，前向+反向 OK。
+- 验证(真实数据贯通)：mix 数据 → DataLoader(bs2,crop256) → SINF → (2,1,256,256)(CUDA) → Charbonnier N2N loss=3.012 → backward OK。
+- ⚠️ **显存实测：crop=256 / batch=2 → 峰值 5.40 GB**。旧 512/48 配置在多帧模型上完全不可行（需大幅下调 crop/batch）。第一次真跑前需用户确认 A500 单卡显存。
