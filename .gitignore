@@ -22,3 +22,6 @@ results/*
 # OS
 .DS_Store
 Thumbs.db
+
+# 实验输出目录
+results_*/
