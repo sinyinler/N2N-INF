@@ -69,6 +69,8 @@
 - **显存**：旧 512×512 / batch=48 是单帧 CNN 的配置。多帧（×5）+ TSGM 图注意力 + 逐像素 INF 解码会大幅抬高显存，512/48 极可能 OOM。模型搭好后**先实测**，按需下调 crop（256/128）和 batch。
 - **帧间运动**：用户反馈肉眼运动不明显，但血流确实在动 → TSGM 对齐的价值需在结果上验证（对比"有/无 TSGM"也可作为消融，待定）。
 - **interval=5 弃用**：当前 {7,9} 都满足方案①；若后续想缩小窗到 K=1(T=3) 以复用 interval=6，需重新评估。
+- **拷贝缺文件**：`dataset/data.py` 顶部 import `utils/monotonic_vst.py`，但该文件不在本目录拷贝里 → 直接 import data.py 会 ImportError。新的 `video_pair_dataset.py` 已写成自包含（不依赖它）。做 learned-VST 实验(E3) 时需补回 `utils/monotonic_vst.py`。
+- **运行环境**：torch 在 conda env **`denoise`**（torch 2.8.0+cu126, CUDA 可用）；base 环境无 torch。跑脚本用 `D:/Anaconda/envs/denoise/python.exe`。
 
 ---
 
@@ -79,3 +81,10 @@
 - 确定 B 路：BSN→N2N，保留 ITE+TSGM+INF。
 - 搭建项目骨架（带注释空模块 + `configs/default.yaml`），**尚未写实现逻辑**。
 - 下一步：经用户审核骨架后，按模块填实现（建议顺序：dataset 多帧配对 → backbone 复用 → INF 头 → ITE → TSGM → sinf 顶层 → train/eval）。
+
+### 2026-06-11 — 实现 dataset/video_pair_dataset.py（多帧 N2N 配对）
+- 改了什么：实现多帧 N2N 数据集——滑窗输入 + 窗外 N2N 标签 + 共享裁剪 + log1p；自包含（仅依赖 utils/lbfreadnew）。
+- 为什么：数据管线是 N2N 正确性命门，先跑通并核对方案①再搭网络。
+- 关键设计：`__init__` 强制校验 `min(intervals) ≥ K+5`；`_valid_targets` 保证标签在窗外且去相关；同一样本窗内帧与标签共用一处裁剪。
+- 验证（合成数据，denoise env）：20帧序列→16样本；遍历全部样本"违反方案①约束数=0"；window=(5,1,64,64)、target=(1,64,64)、t_coords=(5,)；log1p 生效；样本0 center=2/window=[0..4]/targets=[9,11] 符合预期。
+- 结论/下一步：数据层可用。下一步复用 model/denoiser.py 降级为逐帧 backbone，再写 INF 头。真实数据上还需再跑一次自检确认序列发现正确。
