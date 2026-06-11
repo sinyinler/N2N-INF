@@ -51,9 +51,10 @@ train:
   batch_size: 16              # 服务器 2×A5000(24GB)：crop256 总batch16(每卡8)；本地小卡需调小
   device: cuda
   multi_gpu: true             # >1 卡时自动 DataParallel，batch_size 按卡均分
-  epochs: 100
-  num_workers: 4
-  save_every: 1               # 每多少 epoch 存一次 checkpoint
+  epochs: 20                  # 数据量大(~26万张/epoch≈1.6万iter)，几个epoch通常已收敛；可用 --max_iters 控制
+  num_workers: 8              # 数据多、读 lbf/npy+裁剪较重，多开 worker 喂数据
+  save_every: 1               # 每多少 epoch 存一次带 epoch 编号的 checkpoint
+  ckpt_every_iters: 2000      # 每多少 iter 覆盖存一次 sinf_last.pth（崩溃/掉线保险）
   vis_every: 200              # 每多少 iter 存一张训练可视化
   out_dir: results
 

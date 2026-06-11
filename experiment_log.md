@@ -149,5 +149,10 @@
 - 服务器自检命令：`python -m dataset.video_pair_dataset /mnt2/songyd/mix`（开训前先跑，核对序列数≈334、bfi_nonoverlap 排除、npy/lbf 帧数）。
 - 服务器访问：无法自主操作（仅密码登录、非交互工具无法输密码）；协作方式＝本地改好→用户 git pull 自跑。
 
+### 2026-06-11 — 服务器自检通过 + 长训练功能
+- 服务器自检(/mnt2/songyd/mix)：序列正确识别(各400~1000帧)、方案①约束过、bfi_nonoverlap 排除。数据量≈26万张。
+- 数据量提醒：~26万样本/epoch ≈ 1.6万 iter(bs16)，A5000 每 epoch 约 1.5~2h；100 epoch 过度，几个 epoch 通常已收敛。config epochs 改 20，建议用 --max_iters 控制。
+- train.py 加：`--resume` 断点续训；`ckpt_every_iters`(默认2000) 按 iter 覆盖存 sinf_last.pth(崩溃/掉线保险)；num_workers→8。本地验证 iter-ckpt 与 resume 均 OK。
+
 ## 6. 里程碑
 - **2026-06-11**：SINF(BSN→N2N) 全部模块 + train/eval 建成，真实数据端到端跑通；本地 1000iter 理智测试确认 loss 收敛 + 去噪雏形（大血管清晰、背景去噪），方向正确。下一步＝服务器 2×A5000 正式训练出 baseline + 修 eval 分块接缝。

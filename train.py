@@ -74,7 +74,8 @@ def main():
     ap.add_argument("--batch_size", type=int, default=None)
     ap.add_argument("--epochs", type=int, default=None)
     ap.add_argument("--device", default=None)
-    ap.add_argument("--max_iters", type=int, default=None, help="调试用：限制总迭代数")
+    ap.add_argument("--max_iters", type=int, default=None, help="限制总迭代数（按 iter 控制训练量）")
+    ap.add_argument("--resume", default=None, help="从 checkpoint 断点续训")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
@@ -109,6 +110,12 @@ def main():
 
     # 模型 / 损失 / 优化器
     model = SINF.from_config(cfg).to(device)
+    start_epoch = 0
+    if args.resume:
+        ck = torch.load(args.resume, map_location=device)
+        model.load_state_dict(ck["model"])
+        start_epoch = int(ck.get("epoch", 0))
+        print(f"[resume] 从 {args.resume} 继续（epoch {start_epoch}, iter {ck.get('iter', '?')}）")
     use_dp = (device == "cuda" and torch.cuda.device_count() > 1 and tcfg.get("multi_gpu", True))
     if use_dp:
         model = torch.nn.DataParallel(model)
@@ -124,8 +131,9 @@ def main():
     n_params = sum(p.numel() for p in model.parameters())
     print(f"[model] SINF 参数 {n_params/1e6:.4f}M  loss={cfg['loss'].get('type')}  device={device}")
 
+    ckpt_every_iters = int(tcfg.get("ckpt_every_iters", 0))
     it = 0
-    for epoch in range(epochs):
+    for epoch in range(start_epoch, epochs):
         model.train()
         for window, t_coords, target in dl:
             window, t_coords, target = window.to(device), t_coords.to(device), target.to(device)
@@ -141,6 +149,12 @@ def main():
                 print(f"epoch {epoch} iter {it} loss {loss.item():.5f}")
             if tcfg.get("vis_every") and it % int(tcfg["vis_every"]) == 0:
                 save_train_vis(window, out, target, os.path.join(out_dir, "vis", f"it{it:06d}.png"))
+            # 按 iter 定期存最新 checkpoint（长 epoch 的崩溃保险）
+            if ckpt_every_iters and it > 0 and it % ckpt_every_iters == 0:
+                state = (model.module if use_dp else model).state_dict()
+                torch.save({"model": state, "epoch": epoch, "iter": it, "cfg": cfg},
+                           os.path.join(out_dir, "sinf_last.pth"))
+                print(f"[ckpt] iter {it} -> sinf_last.pth")
             it += 1
             if args.max_iters and it >= args.max_iters:
                 break
