@@ -48,7 +48,8 @@ train:
   betas: [0.9, 0.999]
   weight_decay: 1.0e-6
   grad_clip_norm: 5
-  batch_size: 16              # 服务器 2×A5000(24GB)：crop256 总batch16(每卡8)；本地小卡需调小
+  batch_size: 8               # 2×A5000(24GB)：crop256 总batch8(每卡4)≈10GB/卡，稳；有余量可调到12
+                              # 注：batch16 会因 TSGM注意力显存+DataParallel把loss堆到GPU0 而 OOM
   device: cuda
   multi_gpu: true             # >1 卡时自动 DataParallel，batch_size 按卡均分
   epochs: 20                  # 数据量大(~26万张/epoch≈1.6万iter)，几个epoch通常已收敛；可用 --max_iters 控制
