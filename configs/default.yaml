@@ -46,10 +46,17 @@ train:
   betas: [0.9, 0.999]
   weight_decay: 1.0e-6
   grad_clip_norm: 5
-  batch_size: 48              # 沿用旧配置；多帧模型极可能 OOM，实测下调（见 log §4）
-  device: cuda                # 2x A500 工作站
+  batch_size: 2               # 多帧模型显存重：本地3060 crop256/bs2≈5.4GB；服务器按 A500 显存调
+  device: cuda
+  epochs: 100
+  num_workers: 4
+  save_every: 1               # 每多少 epoch 存一次 checkpoint
+  vis_every: 200              # 每多少 iter 存一张训练可视化
+  out_dir: results
 
 eval:
   metrics: [psnr, ssim, pearson_r]
   full_frame_sliding: true    # 评估用全图滑窗推理
   roi_zoom: true              # 细小血管 ROI 局部放大（规范第4条）
+  tile_size: 256              # 全图分块推理的块大小（与训练 crop 一致，保证坐标归一化口径一致）
+  tile_overlap: 32            # 相邻块重叠像素，配合羽化融合消除接缝

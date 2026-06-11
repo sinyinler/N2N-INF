@@ -123,3 +123,15 @@
 - 验证(dummy)：(2,5,1,64,64)→(2,1,64,64)，**总参数 0.1532M**，前向+反向 OK。
 - 验证(真实数据贯通)：mix 数据 → DataLoader(bs2,crop256) → SINF → (2,1,256,256)(CUDA) → Charbonnier N2N loss=3.012 → backward OK。
 - ⚠️ **显存实测：crop=256 / batch=2 → 峰值 5.40 GB**。旧 512/48 配置在多帧模型上完全不可行（需大幅下调 crop/batch）。第一次真跑前需用户确认 A500 单卡显存。
+
+### 2026-06-11 — 实现 train.py / eval.py，整条 pipeline 跑通
+- 改了什么：
+  - `train.py`：yaml 驱动；VideoN2NDataset+DataLoader→SINF→Charbonnier(默认)/L2(E1切换)→Adam+gradclip；定期存 ckpt + 训练3联图可视化。
+  - `eval.py`：全图**分块滑窗推理**（块=tile_size 与训练 crop 一致，保证坐标归一化口径；Hann 羽化融合消接缝）→ 中心帧去噪(log域)→ npy+对比png。
+  - config 补 train(epochs/save_every/vis_every/out_dir 等) 与 eval(tile_size/overlap)。
+- 验证(本地 3060, 真实 mix 数据)：train 5 iter loss 3.13→存 sinf_last.pth+vis；eval 对全图 1208×1352 分块推理→denoised_log.npy(6.5MB)+compare.png。管线全通（模型未训练，输出暂为噪声）。
+- 本地环境：1×RTX 3060(12.9GB)；A500 在服务器（显存未知，待用户确认以定 crop/batch）。
+- 重要记号 — 坐标归一化口径：INFHead 按"当前块 H,W"归一化坐标到[-1,1]，训练用 crop 块、eval 必须同尺寸分块才一致。坐标分支是否真有用（vs 仅作块内位置基）可作消融实验。
+
+## 6. 里程碑
+- **2026-06-11**：SINF(BSN→N2N) 全部模块 + train/eval 建成，真实数据端到端跑通。下一步＝在服务器 A500 上做第一次正式训练（需先定 crop/batch），产出首个 baseline 指标+图像。
