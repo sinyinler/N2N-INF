@@ -79,17 +79,44 @@ def _load_2d(path: str) -> np.ndarray:
     return arr.astype(np.float32, copy=False)
 
 
-def _find_sequence_dirs(root: str) -> list[str]:
-    """递归找出所有"直接包含帧文件"的目录，每个这样的目录视作一条独立序列。
+def _find_sequence_dirs(
+    root: str,
+    npy_subdir: str = "npy",
+    exclude_dirs: tuple[str, ...] = ("bfi_nonoverlap",),
+) -> list[str]:
+    """发现序列目录，匹配真实数据集结构 /mnt2/songyd/mix/：
 
-    兼容多种摆放：root/*.lbf、root/idx/*.lbf、root/idx/npy/*.npy、
-    root/level/idx/npy/*.npy 都会各自成为一条序列。
+      - 若 root 本身直接含帧文件 -> root 即一条序列（本地单序列测试用）；
+      - 否则 root 下**每个子文件夹 = 一条独立序列**：
+          * 优先用 <子文件夹>/<npy_subdir>/（如 4/npy/0.npy）；
+          * 没有该子目录时，退回用 <子文件夹>/ 内直接的帧文件（如 311/2_1.lbf）；
+          * 名字在 exclude_dirs 里的目录（如 bfi_nonoverlap）**永不选取**。
+
+    配对只在同一条序列内，绝不跨子文件夹。
     """
-    seq_dirs = []
-    for dirpath, _dirnames, _filenames in os.walk(root):
-        if _list_frames(dirpath):
-            seq_dirs.append(dirpath)
-    return sorted(seq_dirs)
+    if not os.path.isdir(root):
+        return []
+
+    # 情况 A：root 直接含帧文件 -> 单序列
+    if _list_frames(root):
+        return [root]
+
+    # 情况 B：每个子文件夹一条序列
+    seq_dirs: list[str] = []
+    for sub in sorted(os.listdir(root)):
+        if sub in exclude_dirs:
+            continue
+        subpath = os.path.join(root, sub)
+        if not os.path.isdir(subpath):
+            continue
+
+        npy_dir = os.path.join(subpath, npy_subdir)
+        if os.path.isdir(npy_dir) and _list_frames(npy_dir):
+            seq_dirs.append(npy_dir)          # 优先 npy/
+        elif _list_frames(subpath):
+            seq_dirs.append(subpath)          # 退回：子文件夹内直接的 lbf/npy
+        # 否则该子文件夹无可用帧（或只剩 bfi_nonoverlap 等），跳过
+    return seq_dirs
 
 
 def _log1p(x: torch.Tensor) -> torch.Tensor:
@@ -108,6 +135,8 @@ class VideoN2NDataset(Dataset):
         crop_size: int = 512,
         intensity_transform: str = "log1p",
         random_crop: bool = True,
+        npy_subdir: str = "npy",
+        exclude_dirs=("bfi_nonoverlap",),
     ):
         self.root_dir = root_dir
         self.K = int(window_radius)
@@ -115,6 +144,8 @@ class VideoN2NDataset(Dataset):
         self.crop_size = None if (crop_size is None or int(crop_size) <= 0) else int(crop_size)
         self.intensity_transform = str(intensity_transform).lower()
         self.random_crop = bool(random_crop)
+        self.npy_subdir = str(npy_subdir)
+        self.exclude_dirs = tuple(exclude_dirs)
 
         if self.intensity_transform not in {"log1p", "none"}:
             raise ValueError("intensity_transform 目前只支持 'log1p' 或 'none'")
@@ -128,15 +159,18 @@ class VideoN2NDataset(Dataset):
 
         # 发现序列：每条序列存 (目录, 帧文件名列表)
         self.sequences: list[tuple[str, list[str]]] = []
-        for d in _find_sequence_dirs(root_dir):
+        self.n_skipped_short = 0
+        min_len = 2 * self.K + 1 + 1  # 至少能放下一个窗 + 一个窗外标签
+        for d in _find_sequence_dirs(root_dir, self.npy_subdir, self.exclude_dirs):
             files = _list_frames(d)
-            if len(files) >= 2 * self.K + 1 + 1:  # 至少能放下一个窗 + 一个窗外标签
+            if len(files) >= min_len:
                 self.sequences.append((d, files))
+            elif len(files) > 0:
+                self.n_skipped_short += 1  # 帧数不足的序列（记数以便核对）
 
         if not self.sequences:
             raise RuntimeError(
-                f"在 {root_dir} 下未找到可用序列"
-                f"（每条序列至少需 {2 * self.K + 2} 帧）。"
+                f"在 {root_dir} 下未找到可用序列（每条序列至少需 {min_len} 帧）。"
             )
 
         # 构建样本索引：(seq_id, center_t)，要求窗完整且至少存在一个合法标签
@@ -243,10 +277,24 @@ if __name__ == "__main__":
 
     root = sys.argv[1]
     ds = VideoN2NDataset(root, window_radius=2, pair_intervals=(7, 9), crop_size=512)
-    print(f"序列数 = {len(ds.sequences)}，样本数 = {len(ds)}")
+
+    # 序列发现核对：npy/lbf 各多少、是否误收 bfi_nonoverlap、帧数不足跳过多少
+    n_npy = sum(1 for d, _ in ds.sequences if os.path.basename(d) == ds.npy_subdir)
+    n_direct = len(ds.sequences) - n_npy
+    bad_excl = [d for d, _ in ds.sequences if any(ex in d.replace("\\", "/").split("/") for ex in ds.exclude_dirs)]
+    print(f"序列数 = {len(ds.sequences)}（用 {ds.npy_subdir}/ 子目录 {n_npy} 条 / 用子文件夹内直接帧 {n_direct} 条），样本数 = {len(ds)}")
+    print(f"帧数不足被跳过的序列 = {ds.n_skipped_short}")
+    print(f"误收 {ds.exclude_dirs} 的序列 = {len(bad_excl)}  {'✅ 已正确排除' if not bad_excl else '❌ ' + str(bad_excl[:3])}")
+    assert not bad_excl, "❌ 发现 bfi_nonoverlap 被当成训练序列！"
+
+    # 抽几条序列看路径 + 帧数（确认 npy/lbf 都被识别）
+    print("--- 抽样序列 ---")
+    for d, files in random.sample(ds.sequences, k=min(6, len(ds.sequences))):
+        print(f"  {os.path.relpath(d, root)}  ({len(files)} 帧, 例: {files[0]})")
 
     K = ds.K
     # 抽几个样本核对：标签必须在窗外、且与窗内最近帧间隔 ≥5
+    print("--- 抽样样本（方案①约束）---")
     for idx in random.sample(range(len(ds)), k=min(5, len(ds))):
         info = ds.sample_info(idx)
         win = info["window_indices"]

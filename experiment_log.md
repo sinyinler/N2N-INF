@@ -142,5 +142,12 @@
   - ⚠️ **问题2（待观察）**：最细小血管略被柔化（规范盯的"磨平"项）。才1000iter，随训练深入持续观察；必要时启用对比实验 E2(加RTV)。
 - 结论：方法雏形成立，可上服务器正式训练；并行修 eval 接缝。
 
+### 2026-06-11 — 数据集发现逻辑适配真实结构 /mnt2/songyd/mix
+- 背景：用户真实数据集结构 = mix/ 下 334 个子文件夹，每个子文件夹一条连续序列；优先用 <子>/npy/*.npy，没有 npy/ 的子文件夹用其内直接的 <子>/*.lbf；每个子文件夹里的 bfi_nonoverlap/ 必须排除。原 `_find_sequence_dirs`(递归找所有含帧目录)会误收 bfi_nonoverlap，不匹配。
+- 改了什么：重写 `_find_sequence_dirs`——root 直接含帧→单序列(本地兼容)；否则每个子文件夹一条序列，优先 npy_subdir/、退回直接帧、按名排除 exclude_dirs。VideoN2NDataset/config/train.py 加 `npy_subdir`(默认npy)、`exclude_dirs`(默认[bfi_nonoverlap])。增强自检输出(npy/直接帧分类、跳过太短数、bfi_nonoverlap 排除断言)。
+- 验证：模拟 mix/{4/npy,7/npy,311直接帧,20/npy太短,各带bfi_nonoverlap} → 选中 4/7/311 共3条、20太短跳过、bfi_nonoverlap 全排除；本地真实单序列向后兼容。
+- 服务器自检命令：`python -m dataset.video_pair_dataset /mnt2/songyd/mix`（开训前先跑，核对序列数≈334、bfi_nonoverlap 排除、npy/lbf 帧数）。
+- 服务器访问：无法自主操作（仅密码登录、非交互工具无法输密码）；协作方式＝本地改好→用户 git pull 自跑。
+
 ## 6. 里程碑
 - **2026-06-11**：SINF(BSN→N2N) 全部模块 + train/eval 建成，真实数据端到端跑通；本地 1000iter 理智测试确认 loss 收敛 + 去噪雏形（大血管清晰、背景去噪），方向正确。下一步＝服务器 2×A5000 正式训练出 baseline + 修 eval 分块接缝。

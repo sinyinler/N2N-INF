@@ -100,6 +100,8 @@ def main():
         crop_size=crop,
         intensity_transform=dcfg.get("intensity_transform", "log1p"),
         random_crop=True,
+        npy_subdir=dcfg.get("npy_subdir", "npy"),
+        exclude_dirs=tuple(dcfg.get("exclude_dirs", ["bfi_nonoverlap"])),
     )
     dl = DataLoader(ds, batch_size=bs, shuffle=True,
                     num_workers=tcfg.get("num_workers", 4), drop_last=True, pin_memory=(device == "cuda"))

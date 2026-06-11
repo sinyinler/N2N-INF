@@ -13,6 +13,8 @@ data:
   window_radius: 2            # 输入窗半径 K=2
   pair_intervals: [7, 9]      # N2N 标签间隔；已弃用 5（窗半径2 下无法满足去相关≥5）
   exclude_target_from_window: true  # ⚠️ N2N 正确性：标签帧绝不能在输入窗里
+  npy_subdir: npy             # 每个子文件夹优先用 <子>/npy/；没有则退回子文件夹内直接的 lbf
+  exclude_dirs: [bfi_nonoverlap]  # 这些名字的目录永不参与训练
   crop_size: 512              # 沿用旧配置；多帧+TSGM 可能 OOM，实测按需下调（256/128）
   normalize_to_01: false      # 论文归一化[0,1]；我们走 log1p，暂不强制
 
