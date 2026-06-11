@@ -107,6 +107,10 @@ def main():
 
     # 模型 / 损失 / 优化器
     model = SINF.from_config(cfg).to(device)
+    use_dp = (device == "cuda" and torch.cuda.device_count() > 1 and tcfg.get("multi_gpu", True))
+    if use_dp:
+        model = torch.nn.DataParallel(model)
+        print(f"[multi-gpu] DataParallel 启用，{torch.cuda.device_count()} 卡；batch_size={bs} 会按卡均分")
     loss_fn = build_loss(cfg["loss"])
     opt = torch.optim.Adam(
         model.parameters(),
@@ -143,10 +147,12 @@ def main():
 
         if epoch % int(tcfg.get("save_every", 1)) == 0:
             ckpt = os.path.join(out_dir, f"sinf_epoch{epoch:03d}.pth")
-            torch.save({"model": model.state_dict(), "epoch": epoch, "cfg": cfg}, ckpt)
+            state = (model.module if use_dp else model).state_dict()
+            torch.save({"model": state, "epoch": epoch, "cfg": cfg}, ckpt)
             print(f"[ckpt] saved {ckpt}")
 
-    torch.save({"model": model.state_dict(), "epoch": epochs, "cfg": cfg},
+    final_state = (model.module if use_dp else model).state_dict()
+    torch.save({"model": final_state, "epoch": epochs, "cfg": cfg},
                os.path.join(out_dir, "sinf_last.pth"))
     print("[done] 训练结束")
 

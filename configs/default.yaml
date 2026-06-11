@@ -46,8 +46,9 @@ train:
   betas: [0.9, 0.999]
   weight_decay: 1.0e-6
   grad_clip_norm: 5
-  batch_size: 2               # 多帧模型显存重：本地3060 crop256/bs2≈5.4GB；服务器按 A500 显存调
+  batch_size: 16              # 服务器 2×A5000(24GB)：crop256 总batch16(每卡8)；本地小卡需调小
   device: cuda
+  multi_gpu: true             # >1 卡时自动 DataParallel，batch_size 按卡均分
   epochs: 100
   num_workers: 4
   save_every: 1               # 每多少 epoch 存一次 checkpoint
