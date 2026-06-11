@@ -21,7 +21,8 @@ import torch
 import yaml
 from torch.utils.data import DataLoader
 
-from dataset.video_pair_dataset import VideoN2NDataset
+from dataset.video_pair_dataset import VideoN2NDataset, _load_2d, _log1p
+from inference import tiled_denoise
 from loss.charbonnier import CharbonnierLoss
 from model.sinf import SINF
 
@@ -41,23 +42,33 @@ def build_loss(loss_cfg: dict):
     raise ValueError(f"未知 loss.type: {t}")
 
 
-def save_train_vis(window, out, target, save_path):
-    """存一张 3 联图：中心输入 | 去噪输出 | N2N标签（log 域，分位显示）。"""
+def build_preview(ds, K: int, interval: int = 7):
+    """从第一条序列取一个固定的**全图**预览样本：窗 + 时间坐标 + N2N标签邻帧。"""
+    seq_dir, files = ds.sequences[0]
+    n = len(files)
+    c = n // 2
+    idxs = list(range(c - K, c + K + 1))
+    frames = [_log1p(torch.from_numpy(_load_2d(os.path.join(seq_dir, files[i]))).float().unsqueeze(0)) for i in idxs]
+    win = torch.stack(frames, dim=0)                          # (T,1,H,W) 全分辨率 log 域
+    denom = max(n - 1, 1)
+    tc = torch.tensor([i / denom for i in idxs], dtype=torch.float32)
+    tj = c + interval if c + interval < n else c - interval
+    tgt = _log1p(torch.from_numpy(_load_2d(os.path.join(seq_dir, files[tj]))).float().unsqueeze(0))[0].numpy()
+    return win, tc, win[K, 0].numpy(), tgt
+
+
+def save_fullframe_vis(center_in, denoised, target, save_path):
+    """存一张**整图** 3 联图：中心输入 | 去噪输出 | N2N标签邻帧（log 域，分位显示）。"""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    T = window.shape[1]
-    center_in = window[0, T // 2, 0].detach().cpu().numpy()
-    out_img = out[0, 0].detach().cpu().numpy()
-    tgt_img = target[0, 0].detach().cpu().numpy()
-
-    imgs = [center_in, out_img, tgt_img]
-    titles = ["center input", "denoised", "N2N target"]
+    imgs = [center_in, denoised, target]
+    titles = ["center input (full)", "denoised (full)", "N2N target (full)"]
     vmin = float(np.percentile(np.concatenate([i.ravel() for i in imgs]), 1))
     vmax = float(np.percentile(np.concatenate([i.ravel() for i in imgs]), 99))
 
-    fig, axes = plt.subplots(1, 3, figsize=(12, 4), constrained_layout=True)
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5), constrained_layout=True)
     for ax, im, ti in zip(axes, imgs, titles):
         ax.imshow(im, cmap="gray", vmin=vmin, vmax=vmax)
         ax.set_title(ti)
@@ -131,6 +142,13 @@ def main():
     n_params = sum(p.numel() for p in model.parameters())
     print(f"[model] SINF 参数 {n_params/1e6:.4f}M  loss={cfg['loss'].get('type')}  device={device}")
 
+    # 固定的全图预览样本（每 vis_every iter 出一张整图三联图）
+    ecfg = cfg.get("eval", {})
+    prev_tile = ecfg.get("tile_size", 256)
+    prev_overlap = ecfg.get("tile_overlap", prev_tile // 2)
+    preview_win, preview_tc, preview_in, preview_tgt = build_preview(ds, ds.K, interval=ds.intervals[0])
+    print(f"[preview] 全图预览样本: {tuple(preview_in.shape)} (tile={prev_tile}, overlap={prev_overlap})")
+
     ckpt_every_iters = int(tcfg.get("ckpt_every_iters", 0))
     it = 0
     for epoch in range(start_epoch, epochs):
@@ -148,7 +166,13 @@ def main():
             if it % 50 == 0:
                 print(f"epoch {epoch} iter {it} loss {loss.item():.5f}")
             if tcfg.get("vis_every") and it % int(tcfg["vis_every"]) == 0:
-                save_train_vis(window, out, target, os.path.join(out_dir, "vis", f"it{it:06d}.png"))
+                core = model.module if use_dp else model
+                core.eval()
+                den = tiled_denoise(core, preview_win, preview_tc,
+                                    tile=prev_tile, overlap=prev_overlap, device=device)
+                core.train()
+                save_fullframe_vis(preview_in, den.numpy(), preview_tgt,
+                                   os.path.join(out_dir, "vis", f"it{it:06d}.png"))
             # 按 iter 定期存最新 checkpoint（长 epoch 的崩溃保险）
             if ckpt_every_iters and it > 0 and it % ckpt_every_iters == 0:
                 state = (model.module if use_dp else model).state_dict()

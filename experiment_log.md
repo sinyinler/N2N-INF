@@ -154,5 +154,11 @@
 - 数据量提醒：~26万样本/epoch ≈ 1.6万 iter(bs16)，A5000 每 epoch 约 1.5~2h；100 epoch 过度，几个 epoch 通常已收敛。config epochs 改 20，建议用 --max_iters 控制。
 - train.py 加：`--resume` 断点续训；`ckpt_every_iters`(默认2000) 按 iter 覆盖存 sinf_last.pth(崩溃/掉线保险)；num_workers→8。本地验证 iter-ckpt 与 resume 均 OK。
 
+### 2026-06-11 — 修 eval 分块接缝 + 训练全图预览
+- 新增 `inference.py`（eval 与 train 共用的全图分块滑窗推理）：块=训练crop，overlap 提到 50%(128) + Hann 羽化 → 接缝基本消除（用 1000iter ckpt 验证，对比旧 overlap=32 的网格状跳变明显改善）。
+- eval.py 改为 import inference.tiled_denoise；config eval.tile_overlap 32→128。
+- train.py：训练每 vis_every iter 改为对**固定全图预览样本**做分块推理，出**整图**三联图(中心输入|去噪|N2N标签)，不再是 patch。`build_preview` 取第一条序列中点的全分辨率窗+邻帧标签。
+- 验证：全图预览 (1208×1352) 正常，无接缝；单次预览开销约 3~5s(3060)，相对 200iter 训练间隔可忽略。
+
 ## 6. 里程碑
 - **2026-06-11**：SINF(BSN→N2N) 全部模块 + train/eval 建成，真实数据端到端跑通；本地 1000iter 理智测试确认 loss 收敛 + 去噪雏形（大血管清晰、背景去噪），方向正确。下一步＝服务器 2×A5000 正式训练出 baseline + 修 eval 分块接缝。

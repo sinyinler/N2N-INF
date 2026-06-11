@@ -63,4 +63,4 @@ eval:
   full_frame_sliding: true    # 评估用全图滑窗推理
   roi_zoom: true              # 细小血管 ROI 局部放大（规范第4条）
   tile_size: 256              # 全图分块推理的块大小（与训练 crop 一致，保证坐标归一化口径一致）
-  tile_overlap: 32            # 相邻块重叠像素，配合羽化融合消除接缝
+  tile_overlap: 128           # 相邻块重叠像素（50%），配合 Hann 羽化消除接缝
